@@ -13,6 +13,21 @@ OUTPUT_FILE = 'sensor_data.json'
 baseline_co = 18.45  
 baseline_no = 0.82   
 
+def get_aqi_info(aqi_value):
+    """Returns (Category, Color) based on AQI value."""
+    if aqi_value <= 50:
+        return "Good", "Green"
+    elif aqi_value <= 100:
+        return "Moderate", "Yellow"
+    elif aqi_value <= 150:
+        return "Unhealthy for Sensitive Groups", "Orange"
+    elif aqi_value <= 200:
+        return "Unhealthy", "Red"
+    elif aqi_value <= 300:
+        return "Very Unhealthy", "Purple"
+    else:
+        return "Hazardous", "Maroon"
+
 def append_to_json(new_data):
     data_list = []
     if os.path.exists(OUTPUT_FILE):
@@ -52,13 +67,18 @@ try:
                         
                         final_co = round(baseline_co + noise_co, 3)
                         final_no = round(baseline_no + noise_no, 4)
+                        
+                        air_quality = float(parts[3])
+                        aqi_category, aqi_color = get_aqi_info(air_quality)
 
                         payload = {
                             "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
                             "slave_id": int(parts[0]),
                             "temperature": float(parts[1]),
                             "humidity": float(parts[2]),
-                            "air_quality": float(parts[3]),
+                            "air_quality": air_quality,
+                            "aqi_category": aqi_category,
+                            "aqi_color": aqi_color,
                             "co_level": final_co,
                             "no_level": final_no,
                             "smoke": float(parts[5]),
