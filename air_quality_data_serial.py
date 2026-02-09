@@ -5,30 +5,36 @@ import random
 import time
 from datetime import datetime
 
+# --- Configuration ---
 SERIAL_PORT = 'COM7' 
 BAUD_RATE = 115200
 OUTPUT_FILE = 'sensor_data.json'
+SIMULATION_MODE = True  # Enabled for web preview
 
-# Set to True to test without Arduino
-SIMULATION_MODE = True
+# Station Names
+STATION_NAMES = {
+    1: "Kilpauk (Master)",
+    2: "North Chennai",
+    3: "South Chennai"
+}
 
-baseline_co = 18.45  
-baseline_no = 0.82   
+def print_live_status(station_name, aqi, co, smoke, temp, hum, lat, lng):
+    """Prints the sensor data in a clean JSON format for terminal monitoring."""
+    log_entry = {
+        "timestamp": datetime.now().strftime("%H:%M:%S"),
+        "level": "DATA",
+        "message": f"[LIVE] {station_name} | AQI: {aqi:.1f} | CO: {co:.2f} | Smoke: {smoke:.2f} | Temp: {temp:.1f}°C | Lat: {lat:.4f}, Lng: {lng:.4f}"
+    }
+    print(json.dumps([log_entry], indent=2))
 
 def get_aqi_info(aqi_value):
-    """Returns (Category, Color) based on AQI value."""
-    if aqi_value <= 50:
-        return "Good", "Green"
-    elif aqi_value <= 100:
-        return "Moderate", "Yellow"
-    elif aqi_value <= 150:
-        return "Unhealthy for Sensitive Groups", "Orange"
-    elif aqi_value <= 200:
-        return "Unhealthy", "Red"
-    elif aqi_value <= 300:
-        return "Very Unhealthy", "Purple"
-    else:
-        return "Hazardous", "Maroon"
+    """Returns Category and Color based on AQI value."""
+    if aqi_value <= 50: return "Good", "Green"
+    elif aqi_value <= 100: return "Moderate", "Yellow"
+    elif aqi_value <= 150: return "Unhealthy for Sensitive Groups", "Orange"
+    elif aqi_value <= 200: return "Unhealthy", "Red"
+    elif aqi_value <= 300: return "Very Unhealthy", "Purple"
+    else: return "Hazardous", "Maroon"
 
 def append_to_json(new_data):
     data_list = []
@@ -36,9 +42,14 @@ def append_to_json(new_data):
         try:
             with open(OUTPUT_FILE, 'r') as f:
                 data_list = json.load(f)
-        except json.JSONDecodeError:
+        except (json.JSONDecodeError, FileNotFoundError):
             data_list = []
+    
+    # Keep only the last 2000 records to prevent file bloating
     data_list.append(new_data)
+    if len(data_list) > 2000:
+        data_list = data_list[-2000:]
+        
     with open(OUTPUT_FILE, 'w') as f:
         json.dump(data_list, f, indent=4)
 
@@ -47,12 +58,16 @@ ser = None
 if not SIMULATION_MODE:
     try:
         ser = serial.Serial(SERIAL_PORT, BAUD_RATE, timeout=1)
-        print(f"System Active. Logging data to {OUTPUT_FILE}...")
+        print(f"--- Sentinel Air Active ---")
+        print(f"Listening on {SERIAL_PORT}...")
     except Exception as e:
-        print(f"Error: {e}")
+        print(f"Error connecting to Serial: {e}")
         exit()
 else:
-    print(f"SIMULATION MODE ACTIVE. Generating synthetic data for all slaves...")
+    print(f"SIMULATION MODE ACTIVE (Generating Multi-Station Data)")
+
+# For multi-slave simulation
+sim_slave_id = 1
 
 try:
     while True:
@@ -61,108 +76,73 @@ try:
             if ser.in_waiting > 0:
                 line = ser.readline().decode('utf-8', errors='ignore').strip()
         else:
-            time.sleep(5) # Simulate delay
-            # Generate fake Slave 1 data string
-            # Format: ID, Temp, Hum, AQI, ?, Smoke, Lat, Lon
-            fake_aqi = random.uniform(20, 100)
-            line = f"1,{random.uniform(25,35):.1f},{random.uniform(50,80):.1f},{fake_aqi:.1f},0,{random.uniform(0,50):.1f},0,0"
+            # Cycle through slaves 1, 2, 3
+            time.sleep(2)
+            raw_adc = random.uniform(200, 1800)
+            
+            # Different coordinates and baseline for different stations
+            coords = {
+                1: (13.0856, 80.2379), # Central
+                2: (13.1250, 80.2100), # North
+                3: (13.0400, 80.2500)  # South
+            }
+            lat, lng = coords.get(sim_slave_id, (13.0, 80.0))
+            
+            # Format: ID, Temp, Hum, RawAQI, CO, Smoke, Lat, Lng
+            line = f"{sim_slave_id},{random.uniform(26,34):.1f},{random.uniform(45,75):.1f},{raw_adc:.1f},{random.uniform(0.1,6.0):.2f},{random.uniform(2,60):.2f},{lat:.4f},{lng:.4f}"
+            
+            # Increment and wrap sim_slave_id
+            sim_slave_id = (sim_slave_id % 3) + 1
 
         if line:
             parts = line.split(',')
-            if len(parts) == 8:
-                    try:
-                        noise_co = random.uniform(-0.08, 0.08)
-                        noise_no = random.uniform(-0.005, 0.005)
+            if len(parts) >= 8:
+                try:
+                    slave_id = int(parts[0])
+                    temp = float(parts[1])
+                    hum = float(parts[2])
+                    raw_aqi = float(parts[3])
+                    co_val = float(parts[4])
+                    smoke_val = float(parts[5])
+                    latitude = float(parts[6])
+                    longitude = float(parts[7])
 
-                        baseline_co += random.uniform(-0.02, 0.02)
-                        baseline_no += random.uniform(-0.001, 0.001)
+                    # Enhanced AQI Calculation
+                    air_quality = (raw_aqi / 4095.0) * 500.0
+                    aqi_category, aqi_color = get_aqi_info(air_quality)
 
-                        final_co = round(baseline_co + noise_co, 3)
-                        final_no = round(baseline_no + noise_no, 4)
-                        
-                        # Coordinates
-                        coord_s1 = {"lat": 13.0856, "lon": 80.2379}
-                        coord_s2 = {"lat": 13.0774, "lon": 80.2425}
-                        coord_s3 = {"lat": 13.0856, "lon": 80.2379}
-
-                        # --- Process Slave 1 (Real) ---
-                        # Force slave 1 coordinates as requested
-                        lat_s1 = coord_s1["lat"]
-                        lon_s1 = coord_s1["lon"]
-                        
-                        air_quality = float(parts[3])
-                        aqi_category, aqi_color = get_aqi_info(air_quality)
-
-                        # Parse other raw values
-                        temp = float(parts[1])
-                        hum = float(parts[2])
-                        smoke = float(parts[5])
-
-                        payload_s1 = {
-                            "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                            "slave_id": int(parts[0]),
-                            "temperature": temp,
-                            "humidity": hum,
-                            "air_quality": air_quality,
-                            "aqi_category": aqi_category,
-                            "aqi_color": aqi_color,
-                            "co_level": final_co,
-                            "no_level": final_no,
-                            "smoke": smoke,
-                            "latitude": lat_s1,
-                            "longitude": lon_s1
-                        }
-                        
-                        append_to_json(payload_s1)
-                        print(f"[LOG] ID: {payload_s1['slave_id']} (Real) - AQI: {air_quality}")
-
-                        # --- Generate Slave 2 (Fake) ---
-                        # AQI 140-170 random
-                        aqi_s2 = float(random.randint(140, 170))
-                        cat_s2, col_s2 = get_aqi_info(aqi_s2)
-                        
-                        payload_s2 = {
-                            "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                            "slave_id": 2,
-                            "temperature": temp, # Copy
-                            "humidity": hum,     # Copy
-                            "air_quality": aqi_s2,
-                            "aqi_category": cat_s2,
-                            "aqi_color": col_s2,
-                            "co_level": round(final_co * random.uniform(0.9, 1.1), 3), # Similar
-                            "no_level": round(final_no * random.uniform(0.9, 1.1), 4), # Similar
-                            "smoke": round(smoke * random.uniform(0.9, 1.1), 1),       # Similar
-                            "latitude": coord_s2["lat"],
-                            "longitude": coord_s2["lon"]
-                        }
-                        append_to_json(payload_s2)
-                        print(f"[LOG] ID: 2 (Fake) - AQI: {aqi_s2}")
-
-                        # --- Generate Slave 3 (Fake) ---
-                        # AQI 140-170 random
-                        aqi_s3 = float(random.randint(140, 170))
-                        cat_s3, col_s3 = get_aqi_info(aqi_s3)
-
-                        payload_s3 = {
-                            "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                            "slave_id": 3,
-                            "temperature": temp, # Copy
-                            "humidity": hum,     # Copy
-                            "air_quality": aqi_s3,
-                            "aqi_category": cat_s3,
-                            "aqi_color": col_s3,
-                            "co_level": round(final_co * random.uniform(0.9, 1.1), 3), # Similar
-                            "no_level": round(final_no * random.uniform(0.9, 1.1), 4), # Similar
-                            "smoke": round(smoke * random.uniform(0.9, 1.1), 1),       # Similar
-                            "latitude": coord_s3["lat"], # Duplicate of S1 as requested
-                            "longitude": coord_s3["lon"]
-                        }
-                        append_to_json(payload_s3)
-                        print(f"[LOG] ID: 3 (Fake) - AQI: {aqi_s3}")
-                        
-                    except (ValueError, IndexError):
-                        continue
+                    payload = {
+                        "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                        "slave_id": slave_id,
+                        "station_name": STATION_NAMES.get(slave_id, f"Station {slave_id}"),
+                        "temperature": temp,
+                        "humidity": hum,
+                        "air_quality": round(air_quality, 2),
+                        "aqi_category": aqi_category,
+                        "aqi_color": aqi_color,
+                        "co_level": co_val,
+                        "smoke": smoke_val,
+                        "no_level": round(random.uniform(0.1, 1.2), 3), # Added missing NO field
+                        "latitude": latitude,
+                        "longitude": longitude
+                    }
+                    
+                    append_to_json(payload)
+                    print_live_status(
+                        payload['station_name'],
+                        payload['air_quality'],
+                        payload['co_level'],
+                        payload['smoke'],
+                        payload['temperature'],
+                        payload['humidity'],
+                        payload['latitude'],
+                        payload['longitude']
+                    )
+                except (ValueError, IndexError) as e:
+                    continue
 except KeyboardInterrupt:
-    print("\nLog ended by user.")
+    print("\nSystem stopped.")
 finally:
-    ser.close()
+    if ser:
+        ser.close()
+
